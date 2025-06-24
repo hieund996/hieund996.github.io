@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PDF Image Appender</title>
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #1e1e2f; color: #fff; padding: 20px; }
+    h2 { margin-top: 30px; }
+    .list { display: flex; flex-wrap: wrap; gap: 10px; }
+    .page-thumb {
+      border: 2px solid #555;
+      padding: 5px;
+      background: #2e2e3e;
+      width: 120px;
+      cursor: grab;
+    }
+    img { width: 100%; display: block; }
+    button { margin-top: 20px; padding: 10px 15px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Append Images to PDF & Reorder</h1>
+
+  <input type="file" id="pdfInput" accept=".pdf" />
+  <input type="file" id="imgInput" accept="image/*" multiple />
+  
+  <h2>Pages:</h2>
+  <div id="pages" class="list"></div>
+
+  <button id="exportBtn">Export Combined PDF</button>
+
+  <script>
+    let pages = []; // { type: 'pdf'|'image', content: ArrayBuffer|Image }
+
+    document.getElementById('pdfInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const pdfBytes = await file.arrayBuffer();
+      const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+      const pageCount = pdfDoc.getPageCount();
+      for (let i = 0; i < pageCount; i++) {
+        const copiedPdf = await PDFLib.PDFDocument.create();
+        const [page] = await copiedPdf.copyPages(pdfDoc, [i]);
+        copiedPdf.addPage(page);
+        const singlePageBytes = await copiedPdf.save();
+        pages.push({ type: 'pdf', content: singlePageBytes });
+        addThumbnail(URL.createObjectURL(new Blob([singlePageBytes])), pages.length - 1);
+      }
+    });
+
+    document.getElementById('imgInput').addEventListener('change', async (e) => {
+      const files = e.target.files;
+      for (const file of files) {
+        const imageUrl = URL.createObjectURL(file);
+        pages.push({ type: 'image', content: await file.arrayBuffer(), fileType: file.type });
+        addThumbnail(imageUrl, pages.length - 1);
+      }
+    });
+
+    function addThumbnail(url, index) {
+      const container = document.getElementById('pages');
+      const div = document.createElement('div');
+      div.className = 'page-thumb';
+      div.dataset.index = index;
+      const img = document.createElement('img');
+      img.src = url;
+      div.appendChild(img);
+      container.appendChild(div);
+    }
+
+    new Sortable(document.getElementById('pages'), {
+      animation: 150,
+      onEnd: () => {
+        // update pages array order
+        const newOrder = [];
+        const children = document.querySelectorAll('.page-thumb');
+        for (const child of children) {
+          const idx = parseInt(child.dataset.index);
+          newOrder.push(pages[idx]);
+        }
+        pages = newOrder;
+
+        // update indices
+        children.forEach((child, i) => child.dataset.index = i);
+      }
+    });
+
+    document.getElementById('exportBtn').addEventListener('click', async () => {
+      const pdfDoc = await PDFLib.PDFDocument.create();
+      for (const page of pages) {
+        if (page.type === 'pdf') {
+          const tempDoc = await PDFLib.PDFDocument.load(page.content);
+          const [copiedPage] = await pdfDoc.copyPages(tempDoc, [0]);
+          pdfDoc.addPage(copiedPage);
+        } else if (page.type === 'image') {
+          let imgEmbed;
+          if (page.fileType === 'image/jpeg') {
+            imgEmbed = await pdfDoc.embedJpg(page.content);
+          } else {
+            imgEmbed = await pdfDoc.embedPng(page.content);
+          }
+          const pageRef = pdfDoc.addPage([imgEmbed.width, imgEmbed.height]);
+          pageRef.drawImage(imgEmbed, {
+            x: 0,
+            y: 0,
+            width: imgEmbed.width,
+            height: imgEmbed.height
+          });
+        }
+      }
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'combined.pdf';
+      link.click();
+    });
+  </script>
+</body>
+</html>
