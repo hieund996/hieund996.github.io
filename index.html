@@ -48,6 +48,34 @@
       padding: 10px 15px;
       font-size: 16px;
     }
+
+    .page-thumb {
+      position: relative;
+      border: 2px solid #555;
+      padding: 5px;
+      background: #2e2e3e;
+      width: 120px;
+      cursor: grab;
+    }
+
+    .page-thumb:hover .delete-btn {
+      display: block;
+    }
+
+    .delete-btn {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: rgba(149, 125, 125, 0.8);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      padding: 2px 6px;
+      cursor: pointer;
+      display: none;
+      z-index: 1;
+    }
   </style>
 </head>
 
@@ -86,9 +114,11 @@
         }
         catch {
           e.target.value = ''
-          return;
+          console.error('Invalid PDF file:', err);
+          alert('Không thể đọc được tệp PDF này.');
         }
       }
+      e.target.value = '';
     });
 
     document.getElementById('imgInput').addEventListener('change', async (e) => {
@@ -98,13 +128,38 @@
         pages.push({ type: 'image', content: await file.arrayBuffer(), fileType: file.type });
         addThumbnail(imageUrl, pages.length - 1);
       }
+      e.target.value = '';
     });
 
+    function updateExportButton() {
+      const exportBtn = document.getElementById('exportBtn');
+      exportBtn.textContent = `Xuất file PDF (${pages.length} trang)`;
+    }
+    function reindexThumbnails() {
+      const thumbs = document.querySelectorAll('.page-thumb');
+      thumbs.forEach((div, i) => div.dataset.index = i);
+    }
+    
     function addThumbnail(url, index, isImage = true) {
       const container = document.getElementById('pages');
       const div = document.createElement('div');
       div.className = 'page-thumb';
       div.dataset.index = index;
+      
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'delete-btn';
+      deleteBtn.innerText = '❌';
+      deleteBtn.title = 'Xoá trang';
+      deleteBtn.onclick = () => {
+        const confirmDelete = confirm('Bạn có chắc chắn muốn xoá trang này?');
+          if (confirmDelete) {
+          div.remove();
+          pages.splice(div.dataset.index, 1);
+          reindexThumbnails();
+          updateExportButton();
+        }
+      };
+      div.appendChild(deleteBtn);
 
       if (isImage) {
         const img = document.createElement('img');
@@ -126,6 +181,7 @@
       }
 
       container.appendChild(div);
+      updateExportButton();
     }
 
     new Sortable(document.getElementById('pages'), {
