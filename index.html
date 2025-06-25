@@ -82,7 +82,7 @@
 <body>
   <h1>Nối file PDF và hình</h1>
 
-  <input type="file" id="pdfInput" accept=".pdf" multiple/>
+  <input type="file" id="pdfInput" accept=".pdf" multiple />
   <input type="file" id="imgInput" accept="image/*" multiple />
 
   <h2>Bản xem trước (kéo thả để sắp xếp thứ tự):</h2>
@@ -92,6 +92,8 @@
 
   <script>
     let originalPdfFileName = 'combined';
+    let refWidth = 595.28;
+    let refHeight = 841.89;
     let pages = []; // { type: 'pdf'|'image', content: ArrayBuffer|Image }
 
     document.getElementById('pdfInput').addEventListener('change', async (e) => {
@@ -101,6 +103,9 @@
         try {
           const pdfBytes = await file.arrayBuffer();
           const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+          const refPage = pdfDoc.getPage(0);
+          refWidth = refPage.getSize().width;
+          refHeight = refPage.getSize().height;
           const pageCount = pdfDoc.getPageCount();
           for (let i = 0; i < pageCount; i++) {
             const copiedPdf = await PDFLib.PDFDocument.create();
@@ -112,7 +117,7 @@
           }
           originalPdfFileName = file.name.replace(/\.pdf$/i, '');
         }
-        catch {
+        catch (err) {
           e.target.value = ''
           console.error('Invalid PDF file:', err);
           alert('Không thể đọc được tệp PDF này.');
@@ -124,9 +129,46 @@
     document.getElementById('imgInput').addEventListener('change', async (e) => {
       const files = e.target.files;
       for (const file of files) {
-        const imageUrl = URL.createObjectURL(file);
-        pages.push({ type: 'image', content: await file.arrayBuffer(), fileType: file.type });
-        addThumbnail(imageUrl, pages.length - 1);
+        const imgBytes = await file.arrayBuffer();
+        const imgPdf = await PDFLib.PDFDocument.create();
+
+        // Embed image depending on type
+        const image = file.type.includes('png')
+          ? await imgPdf.embedPng(imgBytes)
+          : await imgPdf.embedJpg(imgBytes);
+
+        // Add page with reference size
+        const page = imgPdf.addPage([refWidth, refHeight]);
+
+        // Get image original size
+        const { width: imgW, height: imgH } = image;
+
+        // Calculate scale to fit
+        const scale = Math.min(refWidth / imgW, refHeight / imgH);
+        const scaledWidth = imgW * scale;
+        const scaledHeight = imgH * scale;
+
+        // Center the image
+        const x = (refWidth - scaledWidth) / 2;
+        const y = (refHeight - scaledHeight) / 2;
+
+        // Draw the image
+        page.drawImage(image, {
+          x,
+          y,
+          width: scaledWidth,
+          height: scaledHeight
+        });
+
+        // Save this one-page PDF to add into your page list
+        const imgPageBytes = await imgPdf.save();
+
+        // Store in your page array
+        pages.push({ type: 'pdf', content: imgPageBytes });
+
+        // Generate a thumbnail for preview
+        const blobUrl = URL.createObjectURL(new Blob([imgPageBytes], { type: 'application/pdf' }));
+        addThumbnail(blobUrl, pages.length - 1, false);
       }
       e.target.value = '';
     });
@@ -139,20 +181,20 @@
       const thumbs = document.querySelectorAll('.page-thumb');
       thumbs.forEach((div, i) => div.dataset.index = i);
     }
-    
+
     function addThumbnail(url, index, isImage = true) {
       const container = document.getElementById('pages');
       const div = document.createElement('div');
       div.className = 'page-thumb';
       div.dataset.index = index;
-      
+
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'delete-btn';
       deleteBtn.innerText = '❌';
       deleteBtn.title = 'Xoá trang';
       deleteBtn.onclick = () => {
         const confirmDelete = confirm('Bạn có chắc chắn muốn xoá trang này?');
-          if (confirmDelete) {
+        if (confirmDelete) {
           div.remove();
           pages.splice(div.dataset.index, 1);
           reindexThumbnails();
