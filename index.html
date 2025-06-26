@@ -112,7 +112,7 @@
             const [page] = await copiedPdf.copyPages(pdfDoc, [i]);
             copiedPdf.addPage(page);
             const singlePageBytes = await copiedPdf.save();
-            pages.push({ type: 'pdf', content: singlePageBytes });
+            pages.push({ type: 'pdf', content: singlePageBytes, rotation: 0 });
             addThumbnail(URL.createObjectURL(new Blob([singlePageBytes])), pages.length - 1, false);
           }
           originalPdfFileName = file.name.replace(/\.pdf$/i, '');
@@ -164,7 +164,7 @@
         const imgPageBytes = await imgPdf.save();
 
         // Store in your page array
-        pages.push({ type: 'pdf', content: imgPageBytes });
+        pages.push({ type: 'pdf', content: imgPageBytes, rotation: 0, file, angle: 0 });
 
         // Generate a thumbnail for preview
         const blobUrl = URL.createObjectURL(new Blob([imgPageBytes], { type: 'application/pdf' }));
@@ -181,6 +181,41 @@
       const thumbs = document.querySelectorAll('.page-thumb');
       thumbs.forEach((div, i) => div.dataset.index = i);
     }
+    function loadImageFromFile(file) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        const reader = new FileReader();
+        reader.onload = e => {
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function rotateImageBlob(image, angle) {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const rad = angle * Math.PI / 180;
+
+      // Adjust canvas size depending on rotation
+      if (angle % 180 === 0) {
+        canvas.width = image.width;
+        canvas.height = image.height;
+      } else {
+        canvas.width = image.height;
+        canvas.height = image.width;
+      }
+
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(rad);
+      ctx.drawImage(image, -image.width / 2, -image.height / 2);
+
+      return new Promise(resolve =>
+        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.95)
+      );
+    }
 
     function addThumbnail(url, index, isImage = true) {
       const container = document.getElementById('pages');
@@ -188,6 +223,7 @@
       div.className = 'page-thumb';
       div.dataset.index = index;
 
+      // Delete button
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'delete-btn';
       deleteBtn.innerText = '❌';
@@ -203,12 +239,79 @@
       };
       div.appendChild(deleteBtn);
 
+      const tempPage = pages[parseInt(div.dataset.index)];
+      if (tempPage.file && tempPage.file.type.startsWith('image/')) {
+        // Rotate button
+        const rotateBtn = document.createElement('button');
+        rotateBtn.innerText = '⟳';
+        rotateBtn.title = 'Xoay 90°';
+        rotateBtn.style.position = 'absolute';
+        rotateBtn.style.left = '4px';
+        rotateBtn.style.top = '4px';
+        rotateBtn.style.zIndex = 1;
+        rotateBtn.style.border = 'none';
+        rotateBtn.style.background = 'rgba(100, 100, 100, 0.8)';
+        rotateBtn.style.color = 'white';
+        rotateBtn.style.borderRadius = '4px';
+        rotateBtn.style.cursor = 'pointer';
+        rotateBtn.style.padding = '2px 6px';
+        rotateBtn.onclick = async () => {
+          const idx = parseInt(div.dataset.index);
+          const page = pages[idx];
+          page.angle = (page.angle + 90) % 360;
+
+          const img = await loadImageFromFile(page.file);
+          const rotatedBlob = await rotateImageBlob(img, page.angle);
+
+          const rotatedBytes = await rotatedBlob.arrayBuffer();
+          const imgPdf = await PDFLib.PDFDocument.create();
+
+          const embed = await imgPdf.embedJpg(rotatedBytes);
+
+          const { width: imgW, height: imgH } = embed;
+
+          // Rescale to fit ref size
+          const scale = Math.min(refWidth / imgW, refHeight / imgH);
+          const scaledWidth = imgW * scale;
+          const scaledHeight = imgH * scale;
+
+          const x = (refWidth - scaledWidth) / 2;
+          const y = (refHeight - scaledHeight) / 2;
+
+          const pdfPage = imgPdf.addPage([refWidth, refHeight]);
+          pdfPage.drawImage(embed, { x, y, width: scaledWidth, height: scaledHeight });
+
+          const newBytes = await imgPdf.save();
+          page.content = newBytes;
+
+          // Replace thumbnail
+          const newThumb = URL.createObjectURL(new Blob([newBytes]));
+          div.querySelector('canvas')?.remove();
+          const canvas = document.createElement('canvas');
+          div.appendChild(canvas);
+          const loadingTask = pdfjsLib.getDocument(newThumb);
+          loadingTask.promise.then(pdf => {
+            pdf.getPage(1).then(page => {
+              const viewport = page.getViewport({ scale: 0.3 });
+              const context = canvas.getContext('2d');
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              page.render({ canvasContext: context, viewport });
+            });
+          });
+        };
+        div.appendChild(rotateBtn);
+      }
+
+      // Preview
       if (isImage) {
         const img = document.createElement('img');
         img.src = url;
+        img.style.transition = 'transform 0.3s ease';
         div.appendChild(img);
       } else {
         const canvas = document.createElement('canvas');
+        canvas.style.transition = 'transform 0.3s ease';
         div.appendChild(canvas);
         const loadingTask = pdfjsLib.getDocument(url);
         loadingTask.promise.then(pdf => {
@@ -242,13 +345,17 @@
         children.forEach((child, i) => child.dataset.index = i);
       }
     });
-
+    function degreesToRotation(deg) {
+      const PDFLibRotation = PDFLib.degrees || PDFLib.rotationDegrees; // fallback
+      return PDFLibRotation(deg);
+    }
     document.getElementById('exportBtn').addEventListener('click', async () => {
       const pdfDoc = await PDFLib.PDFDocument.create();
       for (const page of pages) {
         if (page.type === 'pdf') {
           const tempDoc = await PDFLib.PDFDocument.load(page.content);
           const [copiedPage] = await pdfDoc.copyPages(tempDoc, [0]);
+          copiedPage.setRotation(degreesToRotation(page.rotation || 0));
           pdfDoc.addPage(copiedPage);
         } else if (page.type === 'image') {
           let imgEmbed;
