@@ -638,6 +638,20 @@
     document.getElementById('trimFilenamesCheckbox').addEventListener('change', function (e) {
       document.getElementById('pages').classList.toggle('expanded-filenames', e.target.checked);
     });
+
+    // Warn the user if there are opened pages when they try to close or reload the page.
+    // Modern browsers ignore custom text, but setting returnValue triggers the confirmation dialog.
+    window.addEventListener('beforeunload', function (e) {
+      try {
+        if (Array.isArray(pages) && pages.length > 0) {
+          e.preventDefault();
+          e.returnValue = '';
+          return '';
+        }
+      } catch (err) {
+        // fail-safe: do nothing if pages isn't accessible for some reason
+      }
+    });
   </script>
 </body>
 
